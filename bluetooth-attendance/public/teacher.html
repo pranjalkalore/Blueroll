@@ -1,0 +1,53 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Teacher · BlueRoll</title><link rel="stylesheet" href="/style.css"></head><body><div class="wrap">
+<nav><a class="logo" href="/" style="color:inherit;text-decoration:none"><i>📡</i> BlueRoll</a><span id="status" class="pill"><span class="dot"></span><span id="stxt">Closed</span></span></nav>
+<div id="banner" class="banner hide"></div>
+
+<div id="login" class="glass center"><h1>Teacher <span class="grad">sign in</span></h1><p class="mut" style="margin:8px 0 18px">Enter your passcode to manage attendance.</p>
+<label>Passcode</label><input id="pw" type="password" placeholder="••••••••"><button class="btn" id="go">Continue</button><div id="lmsg" class="msg"></div></div>
+
+<div id="dash" class="grid hide">
+<div class="glass"><h2>Session</h2>
+<label>Subject / class</label><input id="subject" type="text" placeholder="e.g. Physics · Div A">
+<div class="sw"><div><div>Require Bluetooth</div><div class="mut">Students must detect your beacon</div></div><input id="ble" type="checkbox" checked></div>
+<button class="btn" id="start">▶ Start attendance</button><button class="btn stop hide" id="stop">■ Stop attendance</button>
+<div id="beacon" class="hide" style="margin-top:22px"><div class="mut">Bluetooth beacon name</div><div class="big grad" id="bname">—</div>
+<div class="mut" id="bhelp">Turn on Bluetooth on your phone, open <b>nRF Connect → Advertiser → +</b>, set <b>Complete Local Name</b> to this exact name, and start advertising.</div>
+<div id="codeBox" class="hide" style="margin-top:14px"><div class="mut">Class code</div><div class="big" id="ccode">—</div></div>
+<div class="mut" style="margin-top:14px">Students open:<br><span class="link" id="slink"></span></div></div></div>
+
+<div class="glass"><div style="display:flex;justify-content:space-between;align-items:flex-end;margin-bottom:18px"><div><div class="mut" id="subj">No active session</div><div class="count grad" id="cnt">0</div><div class="mut">students present · <span id="el">0:00</span></div></div>
+<button class="btn ghost" id="csv" style="width:auto;padding:10px 16px">⬇ CSV</button></div><div id="list"><div class="empty">Start attendance to see students appear here live.</div></div></div></div></div>
+
+<script>
+const $=s=>document.querySelector(s);let pass=sessionStorage.tp||'',data=null,seen=new Set(),started=false,fails=0;
+const H=()=>({'content-type':'application/json','x-teacher-pass':pass});
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+async function jf(url,opt){let r;try{r=await fetch(url,opt)}catch(e){throw new Error('Cannot reach the server. Check your internet.')}
+let j={};try{j=await r.json()}catch(e){throw new Error('Server returned an unexpected response ('+r.status+'). Is the /api folder deployed?')}
+if(!r.ok){const e=new Error(j.error||('Error '+r.status));e.status=r.status;throw e}return j}
+const post=body=>jf('/api/session',{method:'POST',headers:H(),body:JSON.stringify(body)});
+function banner(html,warn){const b=$('#banner');if(!html){b.classList.add('hide');return}b.className='banner'+(warn?' warn':'');b.innerHTML=html}
+async function health(){try{const h=await jf('/api/health');
+if(!h.persistent&&h.onVercel)banner('<b>Database not connected.</b>');
+else if(!h.persistent)banner('Running in local test mode (in-memory data). Fine for testing on this computer only.',true);
+else if(h.usingDefaultPasscode)banner('<b>Security:</b> you are using the default passcode. Set the <code>TEACHER_PASSCODE</code> environment variable in Vercel.',true)}
+catch(e){banner('<b>Database problem:</b> '+esc(e.message)+'<br>Open your Vercel project → <b>Storage</b> → create/connect an <b>Upstash Redis</b> database to this project → <b>Redeploy</b>.')}}
+async function login(){pass=$('#pw').value||pass;try{await post({action:'auth'})}catch(e){$('#lmsg').className='msg err';$('#lmsg').textContent=e.status===401?'Wrong passcode':e.message;sessionStorage.removeItem('tp');return}
+sessionStorage.tp=pass;$('#login').classList.add('hide');$('#dash').classList.remove('hide');$('#slink').textContent=location.origin+'/student';health();poll();if(!started){started=true;setInterval(poll,2000)}}
+$('#go').onclick=login;$('#pw').onkeydown=e=>e.key==='Enter'&&login();if(pass)login();
+$('#start').onclick=async()=>{const b=$('#start');b.disabled=true;try{seen.clear();$('#list').innerHTML='';await post({action:'start',subject:$('#subject').value,requireBle:$('#ble').checked});await poll()}catch(e){banner('<b>Could not start:</b> '+esc(e.message)+'<br>Open your Vercel project → <b>Storage</b> → connect an <b>Upstash Redis</b> database → <b>Redeploy</b>.')}b.disabled=false};
+$('#stop').onclick=async()=>{try{await post({action:'stop'});await poll()}catch(e){banner(esc(e.message),true)}};
+async function poll(){try{data=await jf('/api/state',{headers:H(),cache:'no-store'});fails=0;render()}catch(e){if(++fails>=3)banner('<b>Connection lost:</b> '+esc(e.message),true)}}
+function render(){const d=data,on=d.active;$('#status').className='pill'+(on?' live':'');$('#stxt').textContent=on?'Attendance open':'Closed';
+$('#start').classList.toggle('hide',on);$('#stop').classList.toggle('hide',!on);$('#beacon').classList.toggle('hide',!on);
+if(!d.session)return;$('#subj').textContent=d.subject;$('#bname').textContent=d.requireBle?d.bleName:'Not required';$('#bhelp').classList.toggle('hide',!d.requireBle);
+$('#codeBox').classList.toggle('hide',d.requireBle);$('#ccode').textContent=d.code||'';
+const a=d.attendees||[];$('#cnt').textContent=a.length;
+const l=$('#list');if(!a.length){l.innerHTML='<div class="empty">Waiting for students…</div>';return}
+l.querySelector('.empty')?.remove();
+[...a].reverse().forEach(s=>{const k=s.roll.toLowerCase();if(seen.has(k))return;seen.add(k);const el=document.createElement('div');el.className='row';
+el.innerHTML=`<div class="av">${esc(s.name[0].toUpperCase())}</div><div><b>${esc(s.name)}</b><small>Roll ${esc(s.roll)}</small></div><div class="t">${new Date(s.at).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}</div>`;l.prepend(el)})}
+setInterval(()=>{if(!data||!data.session||!data.active)return;const e=Math.floor((Date.now()-data.startedAt)/1000);$('#el').textContent=Math.floor(e/60)+':'+String(e%60).padStart(2,'0')},1000);
+$('#csv').onclick=()=>{const a=(data&&data.attendees)||[];const rows=['Name,Roll,Time',...a.map(s=>`"${s.name.replace(/"/g,'""')}","${s.roll.replace(/"/g,'""')}",${new Date(s.at).toISOString()}`)];
+const u=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));const x=document.createElement('a');x.href=u;x.download=`attendance-${((data&&data.subject)||'class').replace(/\W+/g,'_')}.csv`;x.click()};
+</script></body></html>
